@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 use cpal::{Sample, SampleRate};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use ringbuf::{RingBuffer, Producer, Consumer};
@@ -16,7 +16,7 @@ fn main() -> Result<(), anyhow::Error> {
   
   let decoder = Mp3Decoder::new("yunomi-trackmaker.mp3").unwrap();
   println!("{:#?}", decoder);
-  let duration = decoder.duration();
+  // let duration = decoder.duration();
   let channels = decoder.channels();
   
   let mut supported_configs_range = device
