@@ -1,9 +1,11 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use cpal::{Sample, SampleRate};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use ringbuf::{RingBuffer, Producer, Consumer};
 use anyhow::anyhow;
 
+#[macro_use]
+mod macros;
 mod mp3decoder;
 use mp3decoder::Mp3Decoder;
 
@@ -45,18 +47,16 @@ fn main() -> Result<(), anyhow::Error> {
   let rbsplit = Arc::new(Mutex::new(Some(rb.split())));
   
   // Trying to follow https://github.com/RustAudio/cpal/blob/master/examples/record_wav.rs... <_<
-  // let decoder2 = decoder.clone();
-  
   let stream = match sample_format {
     cpal::SampleFormat::F32 => device.build_output_stream(&config,
-        move |data, _: &_| write_output_data::<f32>(data, &decoder, &rbsplit),
-        err_fn)?,
+      move |data, _: &_| write_output_data::<f32>(data, &decoder, &rbsplit),
+      err_fn)?,
     cpal::SampleFormat::I16 => device.build_output_stream(&config,
-        move |data, _: &_| write_output_data::<i16>(data, &decoder, &rbsplit),
-        err_fn)?,
+      move |data, _: &_| write_output_data::<i16>(data, &decoder, &rbsplit),
+      err_fn)?,
     cpal::SampleFormat::U16 => device.build_output_stream(&config,
-        move |data, _: &_| write_output_data::<u16>(data, &decoder, &rbsplit),
-        err_fn)?,
+      move |data, _: &_| write_output_data::<u16>(data, &decoder, &rbsplit),
+      err_fn)?,
   };
 
   stream.play()?;
@@ -71,38 +71,27 @@ fn main() -> Result<(), anyhow::Error> {
   Ok(())
 }
 
+
 type Handler<T> = Arc<Mutex<Option<T>>>;
 fn write_output_data<T>(
   output: &mut [T],
   decoder: &Handler<Mp3Decoder>,
   rbsplit: &Handler<(Producer<i16>, Consumer<i16>)>,
 ) where T: cpal::Sample {
-  if let Ok(mut guard) = decoder.try_lock() {
-    if let Some(decoder) = guard.as_mut() {
-      let channels = decoder.channels();
-      for frame in output.chunks_mut(channels) {
-        for sample in frame.iter_mut() {
-          let value = decoder.next();
-          match value {
-            Some(next) => {
-              *sample = Sample::from(&next);
-              
-              // Ringbuffer handling
-              if let Ok(mut guard) = rbsplit.try_lock() {
-                if let Some((prod, cons)) = guard.as_mut() {
-                  match prod.push(next) {
-                    Err(next) => {
-                      cons.pop();
-                      prod.push(next).unwrap();
-                    },
-                    _ => ()
-                  }
-                }
-              }
-            },
-            _ => (),
-          }
-        }
+  let mut guard = unwrap_or_return!(decoder.try_lock().ok());
+  let decoder = unwrap_or_return!(guard.as_mut());
+  let mut guard = unwrap_or_return!(rbsplit.try_lock().ok());
+  let (prod, cons) = unwrap_or_return!(guard.as_mut());
+  
+  let channels = decoder.channels();
+  for frame in output.chunks_mut(channels) {
+    for sample in frame.iter_mut() {
+      let next = unwrap_or_return!(decoder.next());
+      *sample = Sample::from(&next);
+      
+      if let Err(next) = prod.push(next) {
+        cons.pop();
+        prod.push(next).unwrap();
       }
     }
   }
