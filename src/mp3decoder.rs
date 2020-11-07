@@ -32,6 +32,7 @@ impl fmt::Debug for Mp3Decoder {
   }
 }
 
+#[allow(dead_code)]
 impl Mp3Decoder {
   pub fn new<P>(file: P) -> Result<Self, ()>
   where P: AsRef<Path> {

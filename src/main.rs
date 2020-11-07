@@ -43,8 +43,11 @@ fn main() -> Result<(), anyhow::Error> {
   let config = supported_config.into();
   
   let decoder = Arc::new(Mutex::new(Some(decoder)));
-  let rb = RingBuffer::<i16>::new(8192);
+  const BUFSIZE: usize = 8192;
+  let rb = RingBuffer::<i16>::new(BUFSIZE);
+  let mut slice = [0; BUFSIZE];
   let rbsplit = Arc::new(Mutex::new(Some(rb.split())));
+  let rbsplit2 = rbsplit.clone();
   
   // Trying to follow https://github.com/RustAudio/cpal/blob/master/examples/record_wav.rs... <_<
   let stream = match sample_format {
@@ -60,13 +63,26 @@ fn main() -> Result<(), anyhow::Error> {
   };
 
   stream.play()?;
+  println!();
   
   'main: loop {
-    // TODO: CODE THE RINGBUFFER'S PERIODIC CONSUMPTION HERE
+    let mut guard = rbsplit2.lock().unwrap();
+    let (_, cons) = match guard.as_mut() {
+      Some(rs) => rs,
+      _ => break 'main,
+    };
+    cons.pop_slice(&mut slice);
+    drop(guard);
+    
+    let mut average: f64 = 0.;
+    for i in 0..BUFSIZE {
+      average += (slice[i] as f64).abs() / (BUFSIZE as f64 * 327.68); // (slice[i] as f64).abs() as f64 / BUFSIZE as f64;
+    }
+    println!("\x1b[1A\x1b[2KAverage: {}=>", "=".repeat(average as usize));
     
     std::thread::sleep(std::time::Duration::from_millis(16));
   }
-
+  
   drop(stream);
   Ok(())
 }
@@ -80,8 +96,6 @@ fn write_output_data<T>(
 ) where T: cpal::Sample {
   let mut guard = unwrap_or_return!(decoder.try_lock().ok());
   let decoder = unwrap_or_return!(guard.as_mut());
-  let mut guard = unwrap_or_return!(rbsplit.try_lock().ok());
-  let (prod, cons) = unwrap_or_return!(guard.as_mut());
   
   let channels = decoder.channels();
   for frame in output.chunks_mut(channels) {
@@ -89,10 +103,14 @@ fn write_output_data<T>(
       let next = unwrap_or_return!(decoder.next());
       *sample = Sample::from(&next);
       
+      let mut guard = rbsplit.lock().unwrap();
+      let (prod, cons) = unwrap_or_return!(guard.as_mut());
       if let Err(next) = prod.push(next) {
         cons.pop();
         prod.push(next).unwrap();
       }
+      drop(guard);
     }
   }
+
 }
