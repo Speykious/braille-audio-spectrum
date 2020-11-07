@@ -2,6 +2,7 @@
 use std::fs::File;
 use std::path::Path;
 use std::io::{BufReader};
+use std::fmt;
 use minimp3::{Decoder, Frame};
 
 #[allow(dead_code)]
@@ -14,6 +15,21 @@ pub struct Mp3Decoder {
   bitrate: i32,
   duration: u64,
   current_frame_offset: usize,
+}
+
+impl fmt::Debug for Mp3Decoder {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+    f.debug_struct("Mp3Decoder")
+     //.field("decoder", &"(Decoder<BufReader<File>>)")
+     //.field("current_frame", &self.current_frame)
+     .field("sample_rate", &self.sample_rate)
+     .field("channels", &self.channels)
+     .field("layer", &self.layer)
+     .field("bitrate", &self.bitrate)
+     .field("duration", &self.duration)
+     .field("current_frame_offset", &self.current_frame_offset)
+     .finish()
+  }
 }
 
 #[allow(dead_code)]
@@ -60,6 +76,10 @@ impl Mp3Decoder {
   pub fn bitrate(&self) -> i32 {
     self.bitrate
   }
+
+  pub fn duration(&self) -> u64 {
+    self.duration
+  }
 }
 
 impl Iterator for Mp3Decoder {
@@ -68,7 +88,7 @@ impl Iterator for Mp3Decoder {
   #[inline]
   fn next(&mut self) -> Option<i16> {
     let l = self.current_frame.data.len();
-    println!("Length of current_frame.data: {}", l);
+    //println!("Length of current_frame.data: {}", l);
     if self.current_frame_offset == l {
       match self.decoder.next_frame() {
         Ok(frame) => self.current_frame = frame,
