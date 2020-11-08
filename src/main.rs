@@ -6,10 +6,12 @@ use anyhow::anyhow;
 
 #[macro_use]
 mod macros;
+mod braille;
 mod mp3decoder;
 use mp3decoder::Mp3Decoder;
 
 fn main() -> Result<(), anyhow::Error> {
+
   let host = cpal::default_host();
   let device = host.default_output_device()
     .expect("no output device available");
