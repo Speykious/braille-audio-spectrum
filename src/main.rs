@@ -7,11 +7,13 @@ use anyhow::anyhow;
 #[macro_use]
 mod macros;
 mod braille;
+use braille::BraillePlot;
 mod mp3decoder;
 use mp3decoder::Mp3Decoder;
 
 fn main() -> Result<(), anyhow::Error> {
-
+  let braille_plot = BraillePlot::new("braille.txt", (0x3264ff, 0x64ccaa), (0, 0), (100, 60))?;
+  println!("{}", braille_plot.braille.iter().cloned().collect::<String>());
   let host = cpal::default_host();
   let device = host.default_output_device()
     .expect("no output device available");
@@ -45,6 +47,7 @@ fn main() -> Result<(), anyhow::Error> {
   let config = supported_config.into();
   
   let decoder = Arc::new(Mutex::new(Some(decoder)));
+  let decoder2 = decoder.clone();
   const BUFSIZE: usize = 8192;
   let rb = RingBuffer::<i16>::new(BUFSIZE);
   let mut slice = [0; BUFSIZE];
@@ -71,7 +74,7 @@ fn main() -> Result<(), anyhow::Error> {
     let mut guard = rbsplit2.lock().unwrap();
     let (_, cons) = match guard.as_mut() {
       Some(rs) => rs,
-      _ => break 'main,
+      None => break 'main,
     };
     cons.pop_slice(&mut slice);
     drop(guard);
@@ -81,6 +84,15 @@ fn main() -> Result<(), anyhow::Error> {
       average += (slice[i] as f64).abs() / (BUFSIZE as f64 * 327.68); // (slice[i] as f64).abs() as f64 / BUFSIZE as f64;
     }
     println!("\x1b[1A\x1b[2KAverage: {}=>", "=".repeat(average as usize));
+    
+    let guard = decoder2.lock().unwrap();
+    let decoder = match guard.as_ref() {
+      Some(d) => d,
+      None => break 'main,
+    };
+    let done = decoder.done();
+    drop(guard);
+    if done { break 'main }
     
     std::thread::sleep(std::time::Duration::from_millis(16));
   }
