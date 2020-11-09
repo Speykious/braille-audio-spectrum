@@ -9,6 +9,7 @@ use minimp3::{Decoder, Frame};
 pub struct Mp3Decoder {
   decoder: Decoder<BufReader<File>>,
   current_frame: Option<Frame>,
+  done: bool,
   sample_rate: i32,
   channels: usize,
   layer: usize,
@@ -22,6 +23,7 @@ impl fmt::Debug for Mp3Decoder {
     f.debug_struct("Mp3Decoder")
      //.field("decoder", &"(Decoder<BufReader<File>>)")
      //.field("current_frame", &self.current_frame)
+     .field("done", &self.done)
      .field("sample_rate", &self.sample_rate)
      .field("channels", &self.channels)
      .field("layer", &self.layer)
@@ -54,6 +56,7 @@ impl Mp3Decoder {
     Ok(Mp3Decoder {
       decoder,
       current_frame,
+      done: false,
       sample_rate,
       channels,
       layer,
@@ -68,6 +71,7 @@ impl Mp3Decoder {
   pub fn layer(&self) -> usize { self.layer }
   pub fn bitrate(&self) -> i32 { self.bitrate }
   pub fn duration(&self) -> u64 { self.duration }
+  pub fn done(&self) -> bool { self.done }
   
   pub fn current_sample(&self) -> Option<i16> {
     Some(self.current_frame.as_ref()?.data[self.current_frame_offset])
@@ -78,7 +82,11 @@ impl Iterator for Mp3Decoder {
   type Item = i16;
 
   fn next(&mut self) -> Option<i16> {
-    let l = self.current_frame.as_ref()?.data.len();
+    if self.done { return None }
+    let l = match self.current_frame.as_ref() {
+      Some(frame) => frame.data.len(),
+      None => { self.done = true; return None }
+    };
     if self.current_frame_offset >= l {
       self.current_frame = self.decoder.next_frame().ok();
       self.current_frame_offset = 0;
