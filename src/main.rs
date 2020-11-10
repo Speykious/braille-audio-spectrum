@@ -2,18 +2,25 @@ use std::sync::{Arc, Mutex};
 use cpal::{Sample, SampleRate};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use ringbuf::{RingBuffer, Producer, Consumer};
+use std::io::Write;
 use anyhow::anyhow;
 
 #[macro_use]
 mod macros;
 mod braille;
-use braille::BraillePlot;
+mod audio;
+use braille::{BRAILLE, BraillePlot};
 mod mp3decoder;
 use mp3decoder::Mp3Decoder;
 
 fn main() -> Result<(), anyhow::Error> {
-  let braille_plot = BraillePlot::new("braille.txt", (0x3264ff, 0x64ccaa), (0, 0), (100, 60))?;
-  println!("{}", braille_plot.braille.iter().cloned().collect::<String>());
+  let braille_plot = BraillePlot {
+    colgrad: (termion::color::Rgb(0xcc, 0x24, 0x1d), termion::color::Reset),
+    position: (1, 1),
+    dims: (80, 40),
+  };
+
+  println!("{}", BRAILLE.iter().cloned().collect::<String>());
   let host = cpal::default_host();
   let device = host.default_output_device()
     .expect("no output device available");
@@ -69,6 +76,9 @@ fn main() -> Result<(), anyhow::Error> {
 
   stream.play()?;
   println!();
+
+  let mut stdout = std::io::stdout();
+  write!(stdout, "{}", termion::cursor::Hide)?;
   
   'main: loop {
     let mut guard = rbsplit2.lock().unwrap();
@@ -81,10 +91,11 @@ fn main() -> Result<(), anyhow::Error> {
     
     let mut average: f64 = 0.;
     for i in 0..BUFSIZE {
-      average += (slice[i] as f64).abs() / (BUFSIZE as f64 * 327.68); // (slice[i] as f64).abs() as f64 / BUFSIZE as f64;
+      average += (slice[i] as f64).abs() / (BUFSIZE as f64 * 32768.);
     }
-    println!("\x1b[1A\x1b[2KAverage: {}=>", "=".repeat(average as usize));
     
+    braille_plot.plot(&mut stdout, vec![average]);
+
     let guard = decoder2.lock().unwrap();
     let decoder = match guard.as_ref() {
       Some(d) => d,
@@ -97,6 +108,7 @@ fn main() -> Result<(), anyhow::Error> {
     std::thread::sleep(std::time::Duration::from_millis(16));
   }
   
+  write!(stdout, "{}", termion::cursor::Show)?;
   drop(stream);
   Ok(())
 }
