@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 use std::ops::{Add, Sub, Mul, Div};
 use std::f64::consts::{PI, TAU, FRAC_PI_2, SQRT_2};
+use crate::audio::fft::transform;
 
 #[derive(Clone, Copy)]
 pub enum ClipMode { Clip, Periodic, Mirror }
@@ -14,6 +15,11 @@ pub enum WeightType { A, B, C, D, M, JustOne }
 pub enum WindowType {
   Hann, Hamming, PowerOfSine, Tukey, Blackman, Nuttall,
   Kaiser, Gauss, Bartlett, QuadraticSpline, Welch, None
+}
+#[derive(Clone, Copy)]
+pub enum FreqScale {
+  Linear, Logarithmic, Mel, Bark,
+  ERB, AsinH, NthRoot, NegExp
 }
 
 pub fn nmap<T>(x: T, min: T, max: T, tmin: T, tmax: T) -> T
@@ -109,55 +115,6 @@ pub fn interp(
   }
 }
 
-// Amplitude scaling
-
-/// The defaults were:
-/// 
-///       nth_root: 1
-///       scale: Scale::Linear
-///       db_range: 70.
-///       use_absolute_value: true
-pub fn ascale(
-  x: f64,
-  nth_root: u64,
-  scale: Scale,
-  db_range: f64,
-  use_absolute_value: bool,
-) -> f64 {
-  match scale {
-    Scale::Logarithmic => nmap(20. * x.log10(), -db_range, 0., 0., 1.),
-    Scale::Linear => {
-      let invroot = 1. / nth_root as f64;
-      nmap(x.powf(invroot),
-        if use_absolute_value { 0. }
-        else { db_to_linear(-db_range).powf(invroot) },
-        1., 0., 1.)
-    },
-  }
-}
-
-/// The defaults were:
-/// 
-///       nth_root: 1
-///       scale: Scale::Linear
-pub fn abs_ascale(x: f64, nth_root: u64, scale: Scale) -> f64 {
-  match scale {
-    Scale::Logarithmic => 20. * x.log10(),
-    Scale::Linear => x.powf(1. / nth_root as f64),
-  }
-}
-
-/// The defaults were:
-/// 
-///       nth_root: 1
-///       scale: Scale::Linear
-pub fn abs_inv_ascale(x: f64, nth_root: u64, scale: Scale) -> f64 {
-  match scale {
-    Scale::Logarithmic => 10_f64.powf(x / 20.),
-    Scale::Linear => x.powf(nth_root as f64),
-  }
-}
-
 /// The defaults were:
 /// 
 ///       factor: .5
@@ -216,11 +173,12 @@ pub fn apply_weight(x: f64, weight_amount: f64, weight_type: WeightType) -> f64 
 }
 
 /// Apply customizable window function
-/// `x`: The position of the window from -1 to 1
-/// `windowType` The specified window function to use
-/// `windowParameter` The parameter of the window function (Adjustable window functions only)
-/// `truncate` Zeroes out if x is more than 1 or less than -1
-/// `windowSkew` Skew the window function to make symmetric windows asymmetric
+/// - `x`: The position of the window from -1 to 1
+/// - `windowType` The specified window function to use
+/// - `windowParameter` The parameter of the window function (Adjustable window functions only)
+/// - `truncate` Zeroes out if x is more than 1 or less than -1
+/// - `windowSkew` Skew the window function to make symmetric windows asymmetric
+///
 /// Returns The gain of window function
 /// 
 /// The defaults were:
@@ -270,4 +228,230 @@ pub fn apply_window(x: f64,
     WindowType::Welch => 1. - x.powf(2.),
     WindowType::None => 1.,
   }
+}
+
+// Frequency Scaling
+
+/// The defaults were:
+/// 
+///       freq_scale: FreqScale::Logarithmic
+///       freq_skew: 0.5
+pub fn fscale(x: f64, freq_scale: FreqScale, freq_skew: f64) -> f64 {
+  match freq_scale {
+    FreqScale::Linear => x,
+    FreqScale::Logarithmic => x.log2(),
+    FreqScale::Mel => (1. + x / 700.).log2(),
+    FreqScale::Bark => (26.81 * x) / (1960. + x) - 0.53,
+    FreqScale::ERB => (1. + 0.00437 * x).log2(),
+    FreqScale::AsinH => (x / 10_f64.powf(freq_skew * 4.)).asinh(),
+    FreqScale::NthRoot => x.powf(1. / (11. - freq_skew * 10.)),
+    FreqScale::NegExp => -2_f64.powf(-x / 2_f64.powf(7. + freq_skew * 8.)),
+  }
+}
+
+/// The defaults were:
+/// 
+///       freq_scale: FreqScale::Logarithmic
+///       freq_skew: 0.5
+pub fn inv_fscale(x: f64, freq_scale: FreqScale, freq_skew: f64) -> f64 {
+  match freq_scale {
+    FreqScale::Linear => x,
+    FreqScale::Logarithmic => 2_f64.powf(x),
+    FreqScale::Mel => 700. * (2_f64.powf(x) - 1.),
+    FreqScale::Bark => 1960. / (26.81 / (x + 0.53) - 1.),
+    FreqScale::ERB => (1. / 0.00437) * (2_f64.powf(x) - 1.),
+    FreqScale::AsinH => x.sinh() * 10_f64.powf(freq_skew * 4.),
+    FreqScale::NthRoot => x.powf(11. - freq_skew * 10.),
+    FreqScale::NegExp => -(-x).log2() * 2_f64.powf(7. + freq_skew * 8.),
+  }
+}
+
+// Amplitude scaling
+
+/// The defaults were:
+/// 
+///       nth_root: 1
+///       scale: Scale::Linear
+///       db_range: 70.
+///       use_absolute_value: true
+pub fn ascale(
+  x: f64,
+  nth_root: u64,
+  scale: Scale,
+  db_range: f64,
+  use_absolute_value: bool,
+) -> f64 {
+  match scale {
+    Scale::Logarithmic => nmap(20. * x.log10(), -db_range, 0., 0., 1.),
+    Scale::Linear => {
+      let invroot = 1. / nth_root as f64;
+      nmap(x.powf(invroot),
+        if use_absolute_value { 0. }
+        else { db_to_linear(-db_range).powf(invroot) },
+        1., 0., 1.)
+    },
+  }
+}
+
+/// The defaults were:
+/// 
+///       nth_root: 1
+///       scale: Scale::Linear
+pub fn abs_ascale(x: f64, nth_root: u64, scale: Scale) -> f64 {
+  match scale {
+    Scale::Logarithmic => 20. * x.log10(),
+    Scale::Linear => x.powf(1. / nth_root as f64),
+  }
+}
+
+/// The defaults were:
+/// 
+///       nth_root: 1
+///       scale: Scale::Linear
+pub fn abs_inv_ascale(x: f64, nth_root: u64, scale: Scale) -> f64 {
+  match scale {
+    Scale::Logarithmic => 10_f64.powf(x / 20.),
+    Scale::Linear => x.powf(nth_root as f64),
+  }
+}
+
+#[derive(Clone, Copy)]
+pub enum Converter { Floor, Ceil, Trunc, Round }
+
+/// The defaults were:
+/// 
+///       func: Converter::Round
+///       bufsize: 4096
+///       sample_rate: 44100
+pub fn hertz_to_fftbin(x: f64, func: Converter, bufsize: u64, sample_rate: u64) -> f64 {
+  let bin = x * bufsize as f64 / sample_rate as f64;
+
+  match func {
+    Converter::Floor => bin.floor(),
+    Converter::Ceil  => bin.ceil(),
+    Converter::Trunc => bin.trunc(),
+    Converter::Round => bin.round(),
+  }
+}
+
+/// The defaults were:
+/// 
+///       bufsize: 4096
+///       sample_rate: 44100
+pub fn fftbin_to_hertz(x: f64, bufsize: u64, sample_rate: u64) -> f64 {
+  x * sample_rate as f64 / bufsize as f64
+}
+
+#[derive(Clone, Copy)]
+pub struct FreqBand {
+  pub lo: f64,
+  pub ctr: f64,
+  pub hi: f64,
+}
+
+/// Frequency bands generator
+/// 
+/// The defaults were:
+/// 
+///       n: 128
+///       low: 20.
+///       high: 20_000.
+///       freq_scale: FreqScale::Logarithmic
+///       freq_skew: 0.5
+///       bandwidth: 0.5
+pub fn generate_freq_bands(
+  n: u64, low: f64, high: f64,
+  freq_scale: FreqScale,
+  freq_skew: f64,
+  bandwidth: f64,
+) -> Vec<FreqBand> {
+  let mut freq_array = Vec::new();
+  let low_fscale = fscale(low, freq_scale, freq_skew);
+  let high_fscale = fscale(high, freq_scale, freq_skew);
+  for i in 0..n {
+    freq_array.push(FreqBand {
+      lo: inv_fscale(nmap(i as f64 - bandwidth, 0., n as f64 - 1.,
+        low_fscale, high_fscale), freq_scale, freq_skew),
+      ctr: inv_fscale(nmap(i as f64, 0., n as f64 - 1.,
+        low_fscale, high_fscale), freq_scale, freq_skew),
+      hi: inv_fscale(nmap(i as f64 + bandwidth, 0., n as f64 - 1.,
+        low_fscale, high_fscale), freq_scale, freq_skew),
+    });
+  }
+
+  freq_array
+}
+
+/// The defaults were:
+/// 
+///       bands_per_octave: 12
+///       lower_note: 4
+///       higher_note: 124
+///       detune: 0.
+///       bandwidth: 0.5
+pub fn generate_octave_bands(
+  bands_per_octave: u64,
+  lower_note: u64,
+  higher_note: u64,
+  detune: f64,
+  bandwidth: f64,
+) -> Vec<FreqBand> {
+  let root24 = 2_f64.powf(1. / 24.);
+  let c0 = 440. * root24.powf(-114.); // ~16.35 Hz
+  let group_notes = 24. / bands_per_octave as f64;
+  
+  let mut bands = Vec::new();
+  let (s, e) = (
+    (lower_note as f64 * 2. / group_notes).round() as u64,
+    (higher_note as f64 * 2. / group_notes).round() as u64,
+  );
+  for i in s..=e {
+    bands.push(FreqBand {
+      lo: c0 * root24.powf((i as f64 - bandwidth) * group_notes + detune),
+      ctr: c0 * root24.powf(i as f64 * group_notes + detune),
+      hi: c0 * root24.powf((i as f64 + bandwidth) * group_notes + detune),
+    });
+  }
+
+  bands
+}
+
+// Calculate the FFT
+pub fn calc_fft(input: &Vec<f64>) -> Result<Vec<f64>, anyhow::Error> {
+  let fft = transform(&input.iter().map(|&x| (x, x)).collect())?;
+  let mut output = Vec::new();
+  let fft_len = fft.len() as f64;
+  for i in 0..((fft_len as f64 / 2.).round() as usize) {
+    let (x, y) = fft[i];
+    output.push(x.hypot(y) / fft_len);
+  }
+
+  Ok(output)
+}
+
+#[derive(Clone, Copy)]
+pub struct ComplexFFT {
+  re: f64,
+  im: f64,
+  magnitude: f64,
+  phase: f64,
+}
+
+pub fn calc_complex_fft(input: &Vec<f64>) -> Result<Vec<ComplexFFT>, anyhow::Error> {
+  let fft = transform(&input.iter().map(|&x| (x, x)).collect())?;
+  
+  let len = input.len();
+  let hlen = len as f64 / 2.;
+  let mut output = Vec::new();
+  for i in 0..len {
+    let (x, y) = fft[i];
+    output.push(ComplexFFT {
+      re: x / hlen,
+      im: y / hlen,
+      magnitude: x.hypot(y) / hlen,
+      phase: y.atan2(x),
+    });
+  }
+
+  Ok(output)
 }
