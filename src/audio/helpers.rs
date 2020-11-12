@@ -617,3 +617,77 @@ pub fn calc_spectrum(
     interp_param, interp_nth_root,
     interp_scale)).collect()
 }
+
+/// Brown-Puckette constant-Q transform algorithm, frequency domain filterbank to turn FFT into CQT
+/// - `complex_fft_coeffs`: The complex FFT coefficients to process
+/// - `octaveSpacing`: Fractional octave, higher values provides frequency higher resolution
+/// - `constantBandwidth`: If set to true, the algorithm will be constant-bandwidth instead
+/// - `hzArray`: Array of center frequency bands
+/// 
+/// Returns Brown-Puckette's CQT output
+pub fn calc_cqt(
+  complex_fft_coeffs: &Vec<ComplexFFT>,
+  octave_spacing: u64,
+  constant_bandwidth: bool,
+  bandwidth: u64,
+  window_function: WindowType,
+  window_parameter: f64,
+  window_skew: f64,
+  hz_array: Option<Vec<FreqBand>>,
+  bufsize: u64,
+  sample_rate: u64,
+) -> Vec<f64> {
+  let hz_array = hz_array.unwrap_or(
+    generate_freq_bands(128, 20., 20_000., FreqScale::Logarithmic, 0.5, 0.5));
+  
+  hz_array.iter().map(|band| {
+    let freq = band.ctr;
+    let (mut a1, mut b1) = (0., 0.);
+    let (mut a2, mut b2) = (0., 0.);
+    let mut tlen = bufsize as f64 / sample_rate as f64;
+    if !constant_bandwidth { tlen = tlen.min(1. / freq * octave_spacing as f64 * 2.); }
+    let flen = (bandwidth * bufsize) as f64 / (tlen * sample_rate as f64);
+    let center = freq * bufsize as f64 / sample_rate as f64;
+    let (start, end) = ((center - flen / 2.).ceil() as usize,
+                        (center + flen / 2.).floor() as usize);
+    let len = 1 + end - start;
+
+    let mut coeffs = Vec::with_capacity(len);
+    for i in start..=end {
+      let x = 2. * (i as f64 - center) / flen;
+      let w = apply_window(x, window_function, window_parameter, true, window_skew);
+      coeffs[i - start] = if i & 1 == 1 { -w } else { w };
+    }
+    let l = complex_fft_coeffs.len();
+    for i in 0..coeffs.len() {
+      let u = coeffs[i];
+      let x = start + i;
+      let y = bufsize as usize - x;
+      a1 += u * complex_fft_coeffs[(x % l + l) % l].re;
+      a2 += u * complex_fft_coeffs[(x % l + l) % l].im;
+      b1 += u * complex_fft_coeffs[(y % l + l) % l].re;
+      b2 += u * complex_fft_coeffs[(y % l + l) % l].im;
+    }
+    let (l1, l2) = (a1 + b1, a2 - b2);
+    let (r1, r2) = (b2 + a2, b1 - a1);
+    let (real, imag) = (l1.hypot(l2), r1.hypot(r2));
+    
+    real.hypot(imag) / 8.
+  }).collect()
+}
+
+pub fn calc_autocorrelation(waveform: &Vec<f64>) -> Vec<f64> {
+  let len = waveform.len();
+  let mut output = Vec::new();
+  for i in 0..len {
+    let mut sum = 0.;
+    for j in 0..(len - i) {
+      let x = waveform[j];
+      let y = waveform[j + i];
+      sum += x * y;
+    }
+    output.push(sum / len as f64);
+  }
+
+  output
+}
