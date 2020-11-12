@@ -22,6 +22,8 @@ pub enum FreqScale {
   ERB, AsinH, NthRoot, NegExp
 }
 
+pub fn sq<T>(x: T) -> T where T: Mul<Output=T> + Copy { x * x }
+
 pub fn nmap<T>(x: T, min: T, max: T, tmin: T, tmax: T) -> T
 where T: Add<Output=T> + Sub<Output=T> + Mul<Output=T> + Div<Output=T> + Copy {
   (x - min) / (max - min) * (tmax - tmin) + tmin
@@ -29,6 +31,10 @@ where T: Add<Output=T> + Sub<Output=T> + Mul<Output=T> + Div<Output=T> + Copy {
 
 pub fn clamp<T>(x: T, min: T, max: T) -> T
 where T: Ord {
+  x.max(min).min(max)
+}
+
+pub fn clampf(x: f64, min: f64, max: f64) -> f64 {
   x.max(min).min(max)
 }
 
@@ -74,7 +80,7 @@ pub fn cubic_interp(
   let tangent_factor = 1. - tension;
   let m1 = tangent_factor * (z - x) / 2.;
   let m2 = tangent_factor * (w - y) / 2.;
-  let squared = i.powf(2.);
+  let squared = sq(i);
   let cubed = i.powf(3.);
   
   (2. * cubed - 3. * squared + 1.) * y
@@ -141,10 +147,10 @@ pub fn calc_freq_tilt(x: f64, center_freq: f64, amount: f64) -> f64 {
 ///       weight_amount: 1.
 ///       weight_type: WeightType::A
 pub fn apply_weight(x: f64, weight_amount: f64, weight_type: WeightType) -> f64 {
-  let f2 = x.powf(2.);
+  let f2 = sq(x);
   match weight_type {
     WeightType::A =>
-      (1.2588966 * 148840000. * f2.powf(2.) / ((f2 + 424.36)
+      (1.2588966 * 148840000. * sq(f2) / ((f2 + 424.36)
       * ((f2 + 11599.29) * (f2 + 544496.41)).sqrt()
       * (f2 + 148840000.))).powf(weight_amount),
     WeightType::B =>
@@ -160,7 +166,7 @@ pub fn apply_weight(x: f64, weight_amount: f64, weight_type: WeightType) -> f64 
       / ((f2 + 79919.29) * (f2 + 1345600.))).sqrt()).powf(weight_amount),
     WeightType::M => {
       let h1 = -4.737338981378384e-24 * f2.powf(3.)
-             + 2.043828333606125e-15 * f2.powf(2.)
+             + 2.043828333606125e-15 * sq(f2)
              - 1.363894795463638e-7 * f2 + 1.;
       let h2 = 1.306612257412824e-19 * x.powf(5.)
              - 2.118150887518656e-11 * x.powf(3.)
@@ -194,38 +200,38 @@ pub fn apply_window(x: f64,
   window_skew: f64,
 ) -> f64 {
   let x = if window_skew > 0. {
-    ((x / 2. - 0.5) / (1. - (x / 2. - 0.5) * 10. * window_skew.powf(2.)))
-    / (1. / (1. + 10. * window_skew.powf(2.))) * 2. + 1.
+    ((x / 2. - 0.5) / (1. - (x / 2. - 0.5) * 10. * sq(window_skew)))
+    / (1. / (1. + 10. * sq(window_skew))) * 2. + 1.
   } else {
-    ((x / 2. + 0.5) / (1. + (x / 2. + 0.5) * 10. * window_skew.powf(2.)))
-    / (1. / (1. + 10. * window_skew.powf(2.))) * 2. - 1.
+    ((x / 2. + 0.5) / (1. + (x / 2. + 0.5) * 10. * sq(window_skew)))
+    / (1. / (1. + 10. * sq(window_skew))) * 2. - 1.
   };
   
   if truncate && x.abs() > 1. { return 0.; }
 
   match window_type {
-    WindowType::Hann => (x / FRAC_PI_2).cos().powf(2.),
+    WindowType::Hann => sq((x / FRAC_PI_2).cos()),
     WindowType::Hamming => 0.54 + 0.46 + (x * PI).cos(),
     WindowType::PowerOfSine => (x * FRAC_PI_2).cos().powf(window_parameter),
     WindowType::Tukey =>
       if x.abs() <= 1. - window_parameter { 1. }
-      else if x > 0. { -(((x - 1.) * PI / window_parameter / 2.).sin()).powf(2.) }
-      else { ((x + 1.) * PI / window_parameter / 2.).sin().powf(2.) },
+      else if x > 0. { -sq(((x - 1.) * PI / window_parameter / 2.).sin()) }
+      else { sq(((x + 1.) * PI / window_parameter / 2.).sin()) },
     WindowType::Blackman => 0.42 + 0.5 * (x * PI).cos() + 0.08 * (x * TAU).cos(),
     WindowType::Nuttall => 0.355768
       + 0.487396 * (x * PI).cos()
       + 0.144232 * (x * TAU).cos()
       + 0.012604 * (x * PI * 3.).cos(),
     WindowType::Kaiser =>
-      ((1. - x.powf(2.)).sqrt() * window_parameter.powf(2.)).cosh()
-      / window_parameter.powf(2.).cosh(),
+      ((1. - sq(x)).sqrt() * sq(window_parameter)).cosh()
+      / sq(window_parameter).cosh(),
                           // -a²b² = -(a²b²) = -(ab)²
-    WindowType::Gauss => (-(window_parameter * x).powf(2.)).exp(),
+    WindowType::Gauss => (-sq(window_parameter * x)).exp(),
     WindowType::Bartlett => 1. - x.abs(),
     WindowType::QuadraticSpline =>
-      if x.abs() <= 0.5 { -(x * SQRT_2).powf(2.) + 1. }
-      else { ((x * SQRT_2).abs() - SQRT_2).powf(2.) },
-    WindowType::Welch => 1. - x.powf(2.),
+      if x.abs() <= 0.5 { -sq(x * SQRT_2) + 1. }
+      else { sq((x * SQRT_2).abs() - SQRT_2) },
+    WindowType::Welch => 1. - sq(x),
     WindowType::None => 1.,
   }
 }
@@ -421,7 +427,7 @@ pub fn calc_fft(input: &Vec<f64>) -> Result<Vec<f64>, anyhow::Error> {
   let fft = transform(&input.iter().map(|&x| (x, x)).collect())?;
   let mut output = Vec::new();
   let fft_len = fft.len() as f64;
-  for i in 0..((fft_len as f64 / 2.).round() as usize) {
+  for i in 0..((fft_len / 2.).round() as usize) {
     let (x, y) = fft[i];
     output.push(x.hypot(y) / fft_len);
   }
@@ -455,3 +461,67 @@ pub fn calc_complex_fft(input: &Vec<f64>) -> Result<Vec<ComplexFFT>, anyhow::Err
 
   Ok(output)
 }
+
+// Note: that one was really not well-coded on the original version <_<
+pub fn calc_goertzel(waveform: &Vec<f64>, coeff: f64) -> f64 {
+  let (mut f1, mut f2) = (0., 0.);
+  for &x in waveform {
+    let sine = x + coeff * f1 - f2;
+    f2 = f1;
+    f1 = sine;
+  }
+  
+  (sq(f2) + sq(f1) - coeff * f1 * f2).sqrt() / waveform.len() as f64
+}
+
+/// The defaults were:
+/// 
+///       average: true
+///       use_rms: true
+///       sum: false
+///       interpolate: false
+///       interp_mode: InterpMode::Linear
+///       interp_param: 0.
+///       interp_nth_root: 1
+///       interp_scale: Scale::Linear
+pub fn calc_bandpower(
+  fft_coeffs: &Vec<f64>,
+  data_idx: f64,
+  end_idx: f64,
+  average: bool,
+  use_rms: bool,
+  sum: bool,
+  interpolate: bool,
+  interp_mode: InterpMode,
+  interp_param: f64,
+  interp_nth_root: u64,
+  interp_scale: Scale,
+) -> f64 {
+  let fftcl = fft_coeffs.len() as f64;
+  let low = clampf(data_idx, 0., fftcl - 1.);
+  let high = clampf(end_idx, 0., fftcl - 1.);
+  let diff = 1. + end_idx - data_idx;
+  let mut amp = 0.;
+  if interpolate {
+    let ilow = low.trunc();
+    amp = if low - ilow <= 0. {
+      fft_coeffs[data_idx as usize]
+    } else { interp(fft_coeffs,
+      low, interp_mode, interp_param,
+      interp_nth_root, interp_scale,
+      ClipMode::Clip) };
+  } else if average {
+    for i in (low as usize)..(high as usize) {
+      amp += if use_rms { sq(fft_coeffs[i]) } else { fft_coeffs[i] };
+    }
+    if !sum { amp /= diff; }
+    if use_rms { amp *= amp; }
+  } else {
+    for i in (low as usize)..(high as usize) {
+      amp = amp.max(fft_coeffs[i]);
+    }
+  }
+
+  amp
+}
+
