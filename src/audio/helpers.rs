@@ -5,7 +5,7 @@ use crate::audio::fft::transform;
 
 #[derive(Clone, Copy)]
 pub enum ClipMode { Clip, Periodic, Mirror }
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum InterpMode { NearestNeighbor, Cubic, Linear, ZeroInsertion }
 #[derive(Clone, Copy)]
 pub enum Scale { Linear, Logarithmic }
@@ -21,6 +21,8 @@ pub enum FreqScale {
   Linear, Logarithmic, Mel, Bark,
   ERB, AsinH, NthRoot, NegExp
 }
+#[derive(Clone, Copy, PartialEq)]
+pub enum BandpowerMode { Interpolate, Bandpower, WithGaps }
 
 pub fn sq<T>(x: T) -> T where T: Mul<Output=T> + Copy { x * x }
 
@@ -180,10 +182,10 @@ pub fn apply_weight(x: f64, weight_amount: f64, weight_type: WeightType) -> f64 
 
 /// Apply customizable window function
 /// - `x`: The position of the window from -1 to 1
-/// - `windowType` The specified window function to use
-/// - `windowParameter` The parameter of the window function (Adjustable window functions only)
-/// - `truncate` Zeroes out if x is more than 1 or less than -1
-/// - `windowSkew` Skew the window function to make symmetric windows asymmetric
+/// - `windowType`: The specified window function to use
+/// - `windowParameter`: The parameter of the window function (Adjustable window functions only)
+/// - `truncate`: Zeroes out if x is more than 1 or less than -1
+/// - `windowSkew`: Skew the window function to make symmetric windows asymmetric
 ///
 /// Returns The gain of window function
 /// 
@@ -525,3 +527,93 @@ pub fn calc_bandpower(
   amp
 }
 
+struct BoundThing {
+  data_idx: f64,
+  end_idx: f64,
+  factor: f64,
+  interpolate: bool,
+}
+
+/// Calculate frequency bands power spectrum from FFT
+///
+/// - `fft_coeffs`: The array of FFT magnitude coefficients
+/// - `bandpower_mode`: FFT to frequency bands spectrum mode, setting to interpolate
+/// to do FFT bin interpolation, otherwise to insert zeroes, or bandpower
+/// to get average amount of amplitude between 2 frequency boundaries
+/// 
+/// - `average`: Average to sum FFT coefficients into bandpower coefficient
+/// - `hz_array`: The array of frequency bands in Hz
+/// 
+/// Returns the output of frequency bands spectrum from linearly-spaced FFT coefficients
+/// 
+/// The defaults were:
+/// 
+///       interpolate: true
+///       bandpower_mode: BandpowerMode::Interpolate
+///       average: true
+///       use_rms: true
+///       sum: false
+///       hz_array: generate_freq_bands()
+///       bufsize: fft_coeffs.len() * 2
+///       sample_rate: 44100
+pub fn calc_spectrum(
+  fft_coeffs: &Vec<f64>,
+  bandpower_mode: BandpowerMode,
+  average: bool,
+  use_rms: bool,
+  sum: bool,
+  fft_bin_interpolation: InterpMode,
+  interp_param: f64,
+  interp_nth_root: u64,
+  interp_scale: Scale,
+  hz_array: Option<Vec<FreqBand>>,
+  bufsize: u64,
+  sample_rate: u64,
+) -> Vec<f64> {
+  let hz_array = hz_array.unwrap_or(
+    generate_freq_bands(128, 20., 20_000., FreqScale::Logarithmic, 0.5, 0.5));
+  
+  let mut bound_arr: Vec<BoundThing> = Vec::new();
+  let mut nbars = 0;
+  let (fmin, fmax) = match bandpower_mode {
+    BandpowerMode::Bandpower => (Converter::Round, Converter::Round),
+    _ => (Converter::Ceil, Converter::Floor),
+  };
+  for fb in hz_array {
+    let min_idx = hertz_to_fftbin(fb.lo, fmin, bufsize, sample_rate);
+    let max_idx = hertz_to_fftbin(fb.hi, fmax, bufsize, sample_rate);
+    let min_idx2 = hertz_to_fftbin(fb.lo, Converter::Floor, bufsize, sample_rate);
+    match (bandpower_mode, fft_bin_interpolation) {
+      (_, InterpMode::ZeroInsertion) => (),
+      (BandpowerMode::Interpolate, _) => {
+        if min_idx > max_idx { nbars += 1; }
+        else {
+          if nbars > 1 {
+            let blen = bound_arr.len();
+            for j in 0..=nbars {
+              bound_arr[blen - j].factor = (nbars - j) as f64 / nbars as f64;
+            }
+          }
+          nbars = 1;
+        }
+      },
+      _ => ()
+    }
+    let temp_cond = min_idx <= max_idx 
+      || bandpower_mode != BandpowerMode::Interpolate
+      || fft_bin_interpolation == InterpMode::ZeroInsertion;
+    bound_arr.push(BoundThing {
+      data_idx: if temp_cond { min_idx } else { min_idx2 },
+      end_idx: max_idx,
+      factor: 0.,
+      interpolate: !temp_cond,
+    });
+  }
+
+  bound_arr.iter().map(|x| calc_bandpower(
+    fft_coeffs, x.data_idx + x.factor,
+    x.end_idx, average, use_rms, sum,
+    x.interpolate, fft_bin_interpolation,
+    interp_param, interp_nth_root,
+    interp_scale)).collect()
+}
