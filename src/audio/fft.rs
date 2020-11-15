@@ -104,14 +104,14 @@ pub fn transform_radix2(input: &Vec<Complex>) -> Result<Vec<Complex>, anyhow::Er
     sin_table: Vec<f64>,
     compute: fn(Complex, Complex, Complex) -> (Complex, Complex),
   ) {
-    let mut size = 1;
+    let mut size = 2;
     while size <= n {
-      let hsize = size;
-      size *= 2;
+      let hsize = size / 2;
       let tablestep = n / size;
       let mut i = 0;
       while i < n {
         let mut k = 0;
+        // println!("s {} | h {} | t {} | i {}", size, hsize, tablestep, i);
         for j in i..(i + hsize) {
           let (adx, bdx) = ((j + hsize) as usize, j as usize);
           let ((r1, i1), (r2, i2)) = compute(
@@ -123,6 +123,7 @@ pub fn transform_radix2(input: &Vec<Complex>) -> Result<Vec<Complex>, anyhow::Er
         }
         i += size;
       }
+      size *= 2;
     }
   }
 

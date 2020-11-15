@@ -35,35 +35,30 @@ where C1: Color + Copy,
     let (x, mut y) = self.position;
     let (w, h) = self.dims;
     let (c, _) = self.colgrad;
+    
+    let mut average: f64 = 0.;
+    let len = data.len();
+    for i in 0..len {
+      average += (data[i] as f64).abs() / (len as f64 * 32768.);
+    }
 
     write!(stdout, "{}{}Average: {}{}{}=>",
       termion::clear::All,
       termion::cursor::Goto(x, y),
-      Fg(c),
-      data[0],
-      "=".repeat((data[0] * 100.) as usize),
+      Fg(c), average,
+      "=".repeat((average * 100.) as usize),
     ).unwrap();
     y += 2;
     
-    /*
-    for dy in 0..5 {
-      write!(stdout, "{}", termion::cursor::Goto(x, y + dy));
-      for dx1 in 0..5 {
-        for dx2 in 0..5 {
-          write!(stdout, "{}", get_braille_char(dx1, dx2));
-        }
-      }
-    }
-    */
-    
     for dy in 0..(h/4) {
       write!(stdout, "{}", termion::cursor::Goto(x, y + dy));
-      for _ in 0..(w/2) {
+      for dx in 0..(w/2) {
         write!(stdout, "{}",
           get_braille_char(
-            ((data[0] * 3. * h as f64) as i16 - h as i16 + (dy as i16 * 4)).max(0) as u16,
-            2
-          )
+            ((data[dx as usize * 2] * 3. * h as f64) as i16
+            - h as i16 + (dy as i16 * 4)).max(0) as u16,
+            ((data[dx as usize * 2 + 1] * 3. * h as f64) as i16
+            - h as i16 + (dy as i16 * 4)).max(0) as u16)
         );
       }
     }

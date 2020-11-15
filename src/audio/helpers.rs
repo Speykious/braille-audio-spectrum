@@ -323,7 +323,7 @@ pub fn abs_inv_ascale(x: f64, nth_root: u64, scale: Scale) -> f64 {
   }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum Converter { Floor, Ceil, Trunc, Round }
 
 /// The defaults were:
@@ -333,6 +333,8 @@ pub enum Converter { Floor, Ceil, Trunc, Round }
 ///       sample_rate: 44100
 pub fn hertz_to_fftbin(x: f64, func: Converter, bufsize: u64, sample_rate: u64) -> f64 {
   let bin = x * bufsize as f64 / sample_rate as f64;
+  println!("x {} | bufsize {} | sample_rate {} | func {:?} -> {}",
+    x, bufsize, sample_rate, func, bin);
 
   match func {
     Converter::Floor => bin.floor(),
@@ -583,13 +585,16 @@ pub fn calc_spectrum(
     let min_idx = hertz_to_fftbin(fb.lo, fmin, bufsize, sample_rate);
     let max_idx = hertz_to_fftbin(fb.hi, fmax, bufsize, sample_rate);
     let min_idx2 = hertz_to_fftbin(fb.lo, Converter::Floor, bufsize, sample_rate);
+    println!("min_idx {} | max_idx {} | min_idx2 {}", min_idx, max_idx, min_idx2);
     match (bandpower_mode, fft_bin_interpolation) {
       (_, InterpMode::ZeroInsertion) => (),
       (BandpowerMode::Interpolate, _) => {
-        if min_idx > max_idx { nbars += 1; }
+        if min_idx > max_idx { nbars += 1;
+          println!("Incrementing nbars: {}", nbars); }
         else {
           if nbars > 1 {
             let blen = bound_arr.len();
+            println!("nbars {} | blen {}", nbars, blen);
             for j in 0..=nbars {
               bound_arr[blen - j].factor = (nbars - j) as f64 / nbars as f64;
             }
@@ -651,12 +656,11 @@ pub fn calc_cqt(
     let (start, end) = ((center - flen / 2.).ceil() as usize,
                         (center + flen / 2.).floor() as usize);
     let len = 1 + end - start;
-
     let mut coeffs = Vec::with_capacity(len);
     for i in start..=end {
       let x = 2. * (i as f64 - center) / flen;
       let w = apply_window(x, window_function, window_parameter, true, window_skew);
-      coeffs[i - start] = if i & 1 == 1 { -w } else { w };
+      coeffs.push(if i & 1 == 1 { -w } else { w });
     }
     let l = complex_fft_coeffs.len();
     for i in 0..coeffs.len() {

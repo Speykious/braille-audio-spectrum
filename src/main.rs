@@ -8,8 +8,10 @@ use anyhow::anyhow;
 #[macro_use]
 mod macros;
 mod braille;
-mod audio;
 use braille::{BRAILLE, BraillePlot};
+mod audio;
+use audio::{get_spectrum, SpectrumSettings, helpers, SampleProvider};
+use audio::fft::transform;
 mod mp3decoder;
 use mp3decoder::Mp3Decoder;
 
@@ -17,7 +19,7 @@ fn main() -> Result<(), anyhow::Error> {
   let braille_plot = BraillePlot {
     colgrad: (termion::color::Rgb(0xcc, 0x24, 0x1d), termion::color::Reset),
     position: (1, 1),
-    dims: (80, 40),
+    dims: (240, 120),
   };
 
   println!("{}", BRAILLE.iter().cloned().collect::<String>());
@@ -80,6 +82,38 @@ fn main() -> Result<(), anyhow::Error> {
   let mut stdout = std::io::stdout();
   write!(stdout, "{}", termion::cursor::Hide)?;
   
+  let settings = SpectrumSettings {
+    sample_provider: SampleProvider::FreqKernel,
+    input_size: 8192,
+    fft_size: 32768,
+    sample_out_count: 256,
+    hz_range: (10., 200.),
+    freq_scale: helpers::FreqScale::Linear,
+    hz_linear_factor: 0.5,
+
+    // Those settings maybe should be on a different struct
+    sample_rate: 44100,
+    win_transform: helpers::WindowType::PowerOfSine,
+    win_parameter: 1.,
+    win_skew: 0.,
+    per_bin_frequency_tilt: 0.,
+    per_bin_weighting_amount: 0.,
+    per_bin_weighting: helpers::WeightType::A,
+    
+    bandpower_mode: helpers::BandpowerMode::Interpolate,
+    use_average: true,
+    use_rms: true,
+    use_sum: false,
+    fft_bin_interpolation: helpers::InterpMode::Cubic,
+    interp_param: 0.,
+    interp_nth_root: 1,
+    interp_scale: helpers::Scale::Linear,
+    cqt_resolution: 24,
+    constant_q: true,
+    cqt_bandwidth: 8,
+    hqac: true,
+  };
+  
   'main: loop {
     let mut guard = rbsplit2.lock().unwrap();
     let (_, cons) = match guard.as_mut() {
@@ -89,12 +123,10 @@ fn main() -> Result<(), anyhow::Error> {
     cons.pop_slice(&mut slice);
     drop(guard);
     
-    let mut average: f64 = 0.;
-    for i in 0..BUFSIZE {
-      average += (slice[i] as f64).abs() / (BUFSIZE as f64 * 32768.);
-    }
-    
-    braille_plot.plot(&mut stdout, vec![average]);
+    let waveform = slice.iter().map(|&i| i as f64 / 32768.).collect();
+    let spectrum = get_spectrum(&waveform, &settings)?;
+    // let spectrum = transform(waveform);
+    braille_plot.plot(&mut stdout, spectrum);
 
     let guard = decoder2.lock().unwrap();
     let decoder = match guard.as_ref() {
